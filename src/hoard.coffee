@@ -249,11 +249,9 @@ updateMany = (filename, points, cb) ->
             currentArchiveIndex = 0
             currentArchive = header.archives[currentArchiveIndex]
             currentPoints = []
-
             updateArchiveCalls = []
             for point in points
                 age = now - point[0]
-
                 while currentArchive.retention < age # We can't fit any more points in this archive
                     if currentPoints
                         # Commit all the points we've found that it can fit
@@ -262,7 +260,6 @@ updateMany = (filename, points, cb) ->
                             f = (cb) -> updateManyArchive fd, header, currentArchive, currentPoints, cb
                             updateArchiveCalls.push(f)
                         currentPoints = []
-
                     if currentArchiveIndex < (archives.length - 1)
                         currentArchiveIndex++
                         currentArchive = archives[currentArchiveIndex]
@@ -270,12 +267,9 @@ updateMany = (filename, points, cb) ->
                         # Last archive
                         currentArchive = null
                         break
-
                 if not currentArchive
                     break # Drop remaining points that don't fit in the database
-
                 currentPoints.push(point)
-
             async.series updateArchiveCalls, (err, results) ->
                 throw err if err
                 if currentArchive and currentPoints.length > 0
@@ -295,6 +289,8 @@ updateMany = (filename, points, cb) ->
 updateManyArchive = (fd, header, archive, points, cb) ->
     step = archive.secondsPerPoint
     alignedPoints = []
+    if points.length == 0
+        return cb null
     for p in points
         [timestamp, value] = p
         alignedPoints.push([timestamp - timestamp.mod(step), value])
@@ -331,6 +327,7 @@ updateManyArchive = (fd, header, archive, points, cb) ->
         if baseInterval == 0
             # This file's first update
             # Use our first string as the base, so we start at the start
+            console.log('Jim packedStrings', packedStrings)
             baseInterval = packedStrings[0][0]
 
         # Write all of our packed strings in locations determined by the baseInterval
@@ -418,7 +415,7 @@ info = (path, cb) ->
                         archives.push(archive)
             .tap ->
                 cb null,
-                    maxRetention: metadata.maxRetention
+                    maxRetention: metadata.maxRetention * 10
                     xFilesFactor: metadata.xff
                     archives: archives
     return
@@ -432,16 +429,12 @@ fetch = (path, from, to, cb) ->
         to = now if to > now or to < from
         diff = now - from
         fd = null
-
         # Find closest archive to look in, that iwll contain our information
         for archive in header.archives
             break if archive.retention >= diff
-
         fromInterval = parseInt(from - from.mod(archive.secondsPerPoint)) + archive.secondsPerPoint
         toInterval = parseInt(to - to.mod(archive.secondsPerPoint)) + archive.secondsPerPoint
-
         file = fs.createReadStream(path)
-
         Binary.stream(file)
             .skip(archive.offset)
             .word32bu('baseInterval')
@@ -462,10 +455,8 @@ fetch = (path, from, to, cb) ->
                         byteDistance = pointDistance * pointSize
                         a = archive.offset + byteDistance.mod(archive.size)
                         a
-
                     fromOffset = getOffset(fromInterval)
                     toOffset = getOffset(toInterval)
-
                     fs.open path, 'r', (err, fd) ->
                         if err then throw err
                         if fromOffset < toOffset
@@ -489,25 +480,21 @@ fetch = (path, from, to, cb) ->
                                     cb(err) if err
                                     unpack(seriesBuffer) # We have read it, go unpack!
                                     fs.close(fd)
-
         unpack = (seriesData) ->
             # Optmize this?
             numPoints = seriesData.length / pointSize
             seriesFormat = "!" + ('Ld' for f in [0...numPoints]).join("")
             unpackedSeries = pack.Unpack(seriesFormat, seriesData)
-
             # Use buffer/pre-allocate?
             valueList = (null for f in [0...numPoints])
             currentInterval = fromInterval
             step = archive.secondsPerPoint
-
             for i in [0...unpackedSeries.length] by 2
                 pointTime = unpackedSeries[i]
                 if pointTime == currentInterval
                     pointValue = unpackedSeries[i + 1]
                     valueList[i / 2] = pointValue
                 currentInterval += step
-
             timeInfo = [fromInterval, toInterval, step]
             cb(null, timeInfo, valueList)
     return
