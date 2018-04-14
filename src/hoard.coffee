@@ -289,8 +289,6 @@ updateMany = (filename, points, cb) ->
 updateManyArchive = (fd, header, archive, points, cb) ->
     step = archive.secondsPerPoint
     alignedPoints = []
-    if points.length == 0
-        return cb null
     for p in points
         [timestamp, value] = p
         alignedPoints.push([timestamp - timestamp.mod(step), value])
@@ -304,19 +302,19 @@ updateManyArchive = (fd, header, archive, points, cb) ->
         [interval, value] = ap
 
         if !previousInterval or (interval == previousInterval + step)
-            currentString.concat(pack.Pack(pointFormat, [interval, value]))
+            currentString = currentString.concat(pack.Pack(pointFormat, [interval, value]))
             previousInterval = interval
         else
             numberOfPoints = currentString.length / pointSize
             startInterval = previousInterval - (step * (numberOfPoints - 1))
-            packedStrings.push([startInterval, new Buffer(currentString)])
+            packedStrings.push([startInterval, Buffer.from(currentString)])
             currentString = pack.Pack(pointFormat, [interval, value])
             previousInterval = interval
 
     if currentString.length > 0
         numberOfPoints = currentString.length / pointSize
         startInterval = previousInterval - (step * (numberOfPoints - 1))
-        packedStrings.push([startInterval, new Buffer(currentString, 'binary')])
+        packedStrings.push([startInterval, Buffer.from(currentString, 'binary')])
 
     # Read base point and determine where our writes will start
     packedBasePoint = new Buffer(pointSize)
@@ -327,7 +325,6 @@ updateManyArchive = (fd, header, archive, points, cb) ->
         if baseInterval == 0
             # This file's first update
             # Use our first string as the base, so we start at the start
-            console.log('Jim packedStrings', packedStrings)
             baseInterval = packedStrings[0][0]
 
         # Write all of our packed strings in locations determined by the baseInterval
@@ -415,7 +412,7 @@ info = (path, cb) ->
                         archives.push(archive)
             .tap ->
                 cb null,
-                    maxRetention: metadata.maxRetention * 10
+                    maxRetention: metadata.maxRetention
                     xFilesFactor: metadata.xff
                     archives: archives
     return
@@ -478,8 +475,9 @@ fetch = (path, from, to, cb) ->
                                 cb(err) if err
                                 fs.read fd, seriesBuffer, size1, size2, archive.offset, (err, num) ->
                                     cb(err) if err
-                                    unpack(seriesBuffer) # We have read it, go unpack!
-                                    fs.close(fd)
+                                    fs.close fd, (err) ->
+                                      cb(err) if err
+                                      unpack(seriesBuffer) # We have read it, go unpack!
         unpack = (seriesData) ->
             # Optmize this?
             numPoints = seriesData.length / pointSize
